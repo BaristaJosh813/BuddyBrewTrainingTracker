@@ -1,4 +1,3 @@
-import { signInAction } from "@/app/auth/actions";
 import { hasSupabaseEnv, isLocalAdminBypassEnabled } from "@/lib/env";
 import Image from "next/image";
 
@@ -58,15 +57,15 @@ export default async function LoginPage({
 
         {error ? <div className="login-alert">{error}</div> : null}
 
-        <form action={signInAction} className="login-form">
+        <form action="/auth/login" className="login-form" method="post">
           <div className="input-grid login-input-grid">
             <label className="field full">
               <span>Email</span>
-              <input autoComplete="email" name="email" type="email" placeholder="manager@buddybrew.com" />
+              <input autoComplete="email" name="email" type="email" placeholder="manager@buddybrew.com" required />
             </label>
             <label className="field full">
               <span>Password</span>
-              <input autoComplete="current-password" name="password" type="password" placeholder="Enter your password" />
+              <input autoComplete="current-password" name="password" type="password" placeholder="Enter your password" required />
             </label>
           </div>
           <div className="button-row login-button-row">
