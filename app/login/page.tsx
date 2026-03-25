@@ -43,8 +43,6 @@ export default async function LoginPage({
         </div>
         <div className="login-header-copy">
           <div className="login-kicker">Buddy Brew Coffee</div>
-          <h1>Training Tracker</h1>
-          <p>A clean, focused sign-in for managers and company admins.</p>
         </div>
       </div>
 
@@ -52,7 +50,6 @@ export default async function LoginPage({
         <div className="page-copy">
           <div className="eyebrow login-card-eyebrow">Manager sign in</div>
           <h2>Access your training dashboard</h2>
-          <p>Store managers can view assigned cafes and employees. Company admins can access the full Buddy Brew network.</p>
         </div>
 
         {error ? <div className="login-alert">{error}</div> : null}
