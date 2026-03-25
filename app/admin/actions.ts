@@ -8,7 +8,7 @@ import { hasSupabaseEnv, isLocalAdminBypassEnabled } from "@/lib/env";
 import { getCurrentUserProfile } from "@/lib/rbac";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { buildEmployeeRoadmap } from "@/lib/training";
-import type { CertificationRow, Employee } from "@/lib/types";
+import type { CertificationRow, Employee, UserProfile } from "@/lib/types";
 
 function getString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -34,12 +34,19 @@ async function assertCompanyAdmin() {
     throw new Error("Supabase environment variables are required before admin actions can run.");
   }
   if (isLocalAdminBypassEnabled()) {
-    return;
+    return {
+      id: "local-dev-admin",
+      appRole: "company_admin" as const,
+      companyId: "local-dev-company",
+      primaryStoreId: null,
+      fullName: "Local Dev Admin"
+    } satisfies UserProfile;
   }
   const profile = await getCurrentUserProfile();
   if (!profile || profile.appRole !== "company_admin") {
     throw new Error("Only company admins can perform this action.");
   }
+  return profile;
 }
 
 async function assertAuthenticatedOperator() {
@@ -51,6 +58,7 @@ async function assertAuthenticatedOperator() {
     return {
       id: "local-dev-admin",
       appRole: "company_admin" as const,
+      companyId: "local-dev-company",
       primaryStoreId: null,
       fullName: "Local Dev Admin"
     };
@@ -68,10 +76,31 @@ async function createScopedActionClient() {
   return isLocalAdminBypassEnabled() ? createSupabaseAdminClient() : await createSupabaseServerClient();
 }
 
+async function assertStoresBelongToCompany(adminClient: ReturnType<typeof createSupabaseAdminClient>, companyId: string, storeIds: string[]) {
+  if (storeIds.length === 0) {
+    return;
+  }
+
+  const { data: scopedStores, error: scopedStoresError } = await adminClient
+    .from("stores")
+    .select("id")
+    .eq("company_id", companyId)
+    .in("id", storeIds);
+
+  if (scopedStoresError) {
+    throw new Error(scopedStoresError.message);
+  }
+
+  if ((scopedStores ?? []).length !== storeIds.length) {
+    throw new Error("Store assignments must stay inside your company.");
+  }
+}
+
 export async function createStoreAction(formData: FormData) {
-  await assertCompanyAdmin();
+  const operator = await assertCompanyAdmin();
   const supabase = createSupabaseAdminClient();
   const payload = {
+    company_id: operator.companyId,
     name: getString(formData, "name"),
     code: normalizeStoreCode(getString(formData, "code")),
     region: getString(formData, "region"),
@@ -92,7 +121,7 @@ export async function createStoreAction(formData: FormData) {
 }
 
 export async function createUserAccessAction(formData: FormData) {
-  await assertCompanyAdmin();
+  const operator = await assertCompanyAdmin();
 
   const adminClient = createSupabaseAdminClient();
   const email = getString(formData, "email").toLowerCase();
@@ -116,6 +145,8 @@ export async function createUserAccessAction(formData: FormData) {
       ? requestedPrimaryStoreId
       : storeIds[0];
 
+  await assertStoresBelongToCompany(adminClient, operator.companyId, storeIds);
+
   const { data: authUserData, error: authUserError } = await adminClient.auth.admin.createUser({
     email,
     password,
@@ -132,6 +163,7 @@ export async function createUserAccessAction(formData: FormData) {
     id: managerId,
     full_name: fullName,
     app_role: isCompanyAdmin ? "company_admin" : "store_manager",
+    company_id: operator.companyId,
     primary_store_id: primaryStoreId
   });
 
@@ -145,6 +177,7 @@ export async function createUserAccessAction(formData: FormData) {
   if (!isCompanyAdmin) {
     const assignmentResult = await adminClient.from("manager_store_assignments").insert(
       storeIds.map((storeId) => ({
+        company_id: operator.companyId,
         manager_id: managerId,
         store_id: storeId
       }))
@@ -163,7 +196,7 @@ export async function createUserAccessAction(formData: FormData) {
 }
 
 export async function updateUserStoreAccessAction(formData: FormData) {
-  await assertCompanyAdmin();
+  const operator = await assertCompanyAdmin();
 
   const adminClient = createSupabaseAdminClient();
   const userId = getString(formData, "user_id");
@@ -176,7 +209,7 @@ export async function updateUserStoreAccessAction(formData: FormData) {
 
   const { data: profile, error: profileError } = await adminClient
     .from("profiles")
-    .select("id, app_role")
+    .select("id, app_role, company_id")
     .eq("id", userId)
     .single();
 
@@ -185,6 +218,11 @@ export async function updateUserStoreAccessAction(formData: FormData) {
   }
 
   const appRole = String(profile.app_role) as "company_admin" | "store_manager";
+  const targetCompanyId = String(profile.company_id);
+
+  if (targetCompanyId !== operator.companyId) {
+    throw new Error("You can only manage users in your own company.");
+  }
 
   if (appRole === "company_admin") {
     revalidatePath("/admin");
@@ -196,6 +234,8 @@ export async function updateUserStoreAccessAction(formData: FormData) {
   }
 
   const primaryStoreId = requestedPrimaryStoreId && storeIds.includes(requestedPrimaryStoreId) ? requestedPrimaryStoreId : storeIds[0];
+
+  await assertStoresBelongToCompany(adminClient, operator.companyId, storeIds);
 
   const { error: updateProfileError } = await adminClient.from("profiles").update({ primary_store_id: primaryStoreId }).eq("id", userId);
 
@@ -211,6 +251,7 @@ export async function updateUserStoreAccessAction(formData: FormData) {
 
   const { error: insertAssignmentsError } = await adminClient.from("manager_store_assignments").insert(
     storeIds.map((storeId) => ({
+      company_id: operator.companyId,
       manager_id: userId,
       store_id: storeId
     }))
@@ -242,6 +283,20 @@ export async function setUserAccessArchivedAction(formData: FormData) {
     throw new Error("You can't archive your own login.");
   }
 
+  const { data: targetProfile, error: targetProfileError } = await adminClient
+    .from("profiles")
+    .select("id, company_id")
+    .eq("id", userId)
+    .single();
+
+  if (targetProfileError || !targetProfile) {
+    throw new Error(targetProfileError?.message ?? "User profile not found.");
+  }
+
+  if (String(targetProfile.company_id) !== operator.companyId) {
+    throw new Error("You can only archive users in your own company.");
+  }
+
   const { error } = await adminClient.auth.admin.updateUserById(userId, {
     ban_duration: archive ? "876000h" : "none"
   });
@@ -255,9 +310,10 @@ export async function setUserAccessArchivedAction(formData: FormData) {
 }
 
 export async function createEmployeeAction(formData: FormData) {
-  await assertCompanyAdmin();
+  const operator = await assertCompanyAdmin();
   const supabase = createSupabaseAdminClient();
   const payload = {
+    company_id: operator.companyId,
     first_name: getString(formData, "first_name"),
     last_name: getString(formData, "last_name"),
     hire_date: getString(formData, "hire_date"),
@@ -269,6 +325,8 @@ export async function createEmployeeAction(formData: FormData) {
   if (!payload.first_name || !payload.last_name || !payload.hire_date || !payload.primary_store_id) {
     throw new Error("First name, last name, hire date, and primary cafe are required.");
   }
+
+  await assertStoresBelongToCompany(supabase, operator.companyId, [payload.primary_store_id]);
 
   const { error } = await supabase.from("employees").insert(payload);
   if (error) {
@@ -592,7 +650,7 @@ export async function updateEmployeeMilestoneCompletionAction(formData: FormData
 }
 
 export async function validateEmployeeCsvAction(formData: FormData) {
-  await assertCompanyAdmin();
+  const operator = await assertCompanyAdmin();
   const csv = getString(formData, "csv");
   const parsed = parseEmployeeCsv(csv);
   if (parsed.errors.length > 0) {
@@ -600,7 +658,10 @@ export async function validateEmployeeCsvAction(formData: FormData) {
   }
 
   const supabase = createSupabaseAdminClient();
-  const { data: stores, error: storeError } = await supabase.from("stores").select("id, code");
+  const { data: stores, error: storeError } = await supabase
+    .from("stores")
+    .select("id, code")
+    .eq("company_id", operator.companyId);
   if (storeError) {
     throw new Error(storeError.message);
   }
@@ -615,6 +676,7 @@ export async function validateEmployeeCsvAction(formData: FormData) {
     return {
       first_name: row.first_name,
       last_name: row.last_name,
+      company_id: operator.companyId,
       role_title: row.role_title,
       hire_date: row.hire_date,
       primary_store_id: primaryStoreId,

@@ -3,6 +3,7 @@ export type AppRole = "company_admin" | "store_manager";
 export type UserProfile = {
   id: string;
   appRole: AppRole;
+  companyId: string;
   primaryStoreId: string | null;
   fullName: string | null;
 };
@@ -12,6 +13,7 @@ export type AdminAccessUser = {
   fullName: string | null;
   email: string | null;
   appRole: AppRole;
+  companyId: string;
   primaryStoreId: string | null;
   assignedStoreIds: string[];
   archived: boolean;
