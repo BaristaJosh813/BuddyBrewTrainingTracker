@@ -1,7 +1,7 @@
 import { demoEmployees, demoStores } from "@/lib/demo-data";
-import { hasSupabaseEnv, isLocalAdminBypassEnabled } from "@/lib/env";
+import { hasSupabaseEnv, hasSupabaseServiceRoleEnv, isLocalAdminBypassEnabled } from "@/lib/env";
 import { getCurrentUserProfile } from "@/lib/rbac";
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { buildEmployeeRoadmap } from "@/lib/training";
 import type { AdminAccessUser, CertificationRow, Employee, MilestoneKey, StartingPosition, Store, UserProfile } from "@/lib/types";
 
@@ -61,7 +61,7 @@ function buildDemoCertificationsByEmployee(): Record<string, CertificationRow[]>
 }
 
 async function getScopedDashboardRows(profile: UserProfile) {
-  const supabase = createSupabaseAdminClient();
+  const supabase = hasSupabaseServiceRoleEnv() ? createSupabaseAdminClient() : await createSupabaseServerClient();
 
   if (profile.appRole === "company_admin") {
     const [{ data: stores }, { data: employees }, { data: certifications }] = await Promise.all([

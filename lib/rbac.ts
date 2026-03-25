@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import type { AppRole, UserProfile } from "@/lib/types";
-import { isLocalAdminBypassEnabled } from "@/lib/env";
+import { hasSupabaseServiceRoleEnv, isLocalAdminBypassEnabled } from "@/lib/env";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function getCurrentUserProfile() {
@@ -24,14 +24,30 @@ export async function getCurrentUserProfile() {
     return null;
   }
 
-  const adminClient = createSupabaseAdminClient();
-  const { data, error } = await adminClient
+  let data: Record<string, unknown> | null = null;
+
+  const profileResult = await supabase
     .from("profiles")
     .select("id, app_role, company_id, primary_store_id, full_name")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (error || !data) {
+  if (!profileResult.error && profileResult.data) {
+    data = profileResult.data as Record<string, unknown>;
+  } else if (hasSupabaseServiceRoleEnv()) {
+    const adminClient = createSupabaseAdminClient();
+    const adminResult = await adminClient
+      .from("profiles")
+      .select("id, app_role, company_id, primary_store_id, full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (!adminResult.error && adminResult.data) {
+      data = adminResult.data as Record<string, unknown>;
+    }
+  }
+
+  if (!data) {
     return null;
   }
 

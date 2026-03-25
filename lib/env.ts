@@ -13,6 +13,10 @@ export function hasSupabaseEnv() {
   return Boolean(env.supabaseUrl && env.supabaseAnonKey);
 }
 
+export function hasSupabaseServiceRoleEnv() {
+  return Boolean(env.supabaseUrl && env.supabaseServiceRoleKey);
+}
+
 export function isLocalAdminBypassEnabled() {
   return process.env.NODE_ENV !== "production" && env.devLocalAdminBypass === "true";
 }
